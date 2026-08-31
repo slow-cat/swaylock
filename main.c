@@ -110,6 +110,8 @@ static void destroy_surface(struct swaylock_surface *surface) {
 	}
 	destroy_buffer(&surface->indicator_buffers[0]);
 	destroy_buffer(&surface->indicator_buffers[1]);
+	destroy_buffer(&surface->background_buffers[0]);
+	destroy_buffer(&surface->background_buffers[1]);
 	wl_output_release(surface->output);
 	free(surface);
 }
@@ -467,6 +469,7 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		LO_LAYOUT_TXT_COLOR,
 		LO_LAYOUT_BG_COLOR,
 		LO_LAYOUT_BORDER_COLOR,
+		LO_LUA_SCRIPT,
 		LO_LINE_COLOR,
 		LO_LINE_CLEAR_COLOR,
 		LO_LINE_CAPS_LOCK_COLOR,
@@ -524,6 +527,7 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		{"layout-bg-color", required_argument, NULL, LO_LAYOUT_BG_COLOR},
 		{"layout-border-color", required_argument, NULL, LO_LAYOUT_BORDER_COLOR},
 		{"layout-text-color", required_argument, NULL, LO_LAYOUT_TXT_COLOR},
+		{"lua-script", required_argument, NULL, LO_LUA_SCRIPT},
 		{"line-color", required_argument, NULL, LO_LINE_COLOR},
 		{"line-clear-color", required_argument, NULL, LO_LINE_CLEAR_COLOR},
 		{"line-caps-lock-color", required_argument, NULL, LO_LINE_CAPS_LOCK_COLOR},
@@ -621,6 +625,8 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 			"Sets the color of the border of the box containing the layout text.\n"
 		"  --layout-text-color <color>      "
 			"Sets the color of the layout text.\n"
+		"  --lua-script <path>              "
+			"Draw the lock screen using the returned Lua function.\n"
 		"  --line-color <color>             "
 			"Sets the color of the line between the inside and ring.\n"
 		"  --line-clear-color <color>       "
@@ -861,6 +867,12 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		case LO_LAYOUT_TXT_COLOR:
 			if (state) {
 				state->args.colors.layout_text = parse_color(optarg);
+			}
+			break;
+		case LO_LUA_SCRIPT:
+			if (state) {
+				free(state->args.lua_script);
+				state->args.lua_script = strdup(optarg);
 			}
 			break;
 		case LO_LINE_COLOR:
@@ -1152,6 +1164,15 @@ int main(int argc, char **argv) {
 		state.args.colors.line = state.args.colors.ring;
 	}
 
+	if (state.args.lua_script) {
+		state.lua_renderer = lua_renderer_create(state.args.lua_script);
+		if (!state.lua_renderer) {
+			free(state.args.lua_script);
+			free(state.args.font);
+			return EXIT_FAILURE;
+		}
+	}
+
 	state.password.len = 0;
 	state.password.buffer_len = 1024;
 	state.password.buffer = password_buffer_create(state.password.buffer_len);
@@ -1270,6 +1291,8 @@ int main(int argc, char **argv) {
 	wl_display_roundtrip(state.display);
 
 	free(state.args.font);
+	free(state.args.lua_script);
+	lua_renderer_destroy(state.lua_renderer);
 	cairo_destroy(state.test_cairo);
 	cairo_surface_destroy(state.test_surface);
 	return 0;

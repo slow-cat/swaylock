@@ -32,6 +32,7 @@ wayland_protos = dependency('wayland-protocols', version: '>=1.25', fallback: 'w
 wayland_scanner = dependency('wayland-scanner', version: '>=1.15.0', native: true)
 xkbcommon = dependency('xkbcommon')
 cairo = dependency('cairo')
+luajit = dependency('luajit')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
 libpam = cc.find_library('pam', required: get_option('pam'))
 crypt = cc.find_library('crypt', required: not libpam.found())
@@ -85,6 +86,7 @@ subdir('include')
 dependencies = [
 	cairo,
 	gdk_pixbuf,
+	luajit,
 	math,
 	rt,
 	xkbcommon,
@@ -97,6 +99,7 @@ sources = [
 	'comm.c',
 	'log.c',
 	'loop.c',
+	'lua-render.c',
 	'main.c',
 	'password.c',
 	'password-buffer.c',

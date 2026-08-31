@@ -5,6 +5,7 @@
 #include <wayland-client.h>
 #include "background-image.h"
 #include "cairo.h"
+#include "lua-render.h"
 #include "pool-buffer.h"
 #include "seat.h"
 
@@ -69,6 +70,7 @@ struct swaylock_args {
 	bool daemonize;
 	int ready_fd;
 	bool indicator_idle_visible;
+	char *lua_script;
 };
 
 struct swaylock_password {
@@ -82,6 +84,7 @@ struct swaylock_state {
 	struct loop_timer *input_idle_timer; // timer to reset input state to IDLE
 	struct loop_timer *auth_idle_timer; // timer to stop displaying AUTH_STATE_INVALID
 	struct loop_timer *clear_password_timer;  // clears the password buffer
+	struct lua_renderer *lua_renderer;
 	struct wl_display *display;
 	struct wl_compositor *compositor;
 	struct wl_subcompositor *subcompositor;
@@ -112,8 +115,10 @@ struct swaylock_surface {
 	struct wl_subsurface *subsurface;
 	struct ext_session_lock_surface_v1 *ext_session_lock_surface_v1;
 	struct pool_buffer indicator_buffers[2];
+	struct pool_buffer background_buffers[2];
 	bool created;
 	bool dirty;
+	bool lua_draw_failed;
 	uint32_t width, height;
 	int32_t scale;
 	enum wl_output_subpixel subpixel;

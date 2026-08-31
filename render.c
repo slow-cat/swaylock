@@ -63,20 +63,17 @@ void render(struct swaylock_surface *surface) {
 		return;
 	}
 
-	bool need_destroy = false;
-	struct pool_buffer buffer;
-
 	if (buffer_width != surface->last_buffer_width ||
-			buffer_height != surface->last_buffer_height) {
-		need_destroy = true;
-		if (!create_buffer(state->shm, &buffer, buffer_width, buffer_height,
-				WL_SHM_FORMAT_ARGB8888)) {
+			buffer_height != surface->last_buffer_height || state->lua_renderer) {
+		struct pool_buffer *buffer = get_next_buffer(state->shm,
+			surface->background_buffers, buffer_width, buffer_height);
+		if (!buffer) {
 			swaylock_log(LOG_ERROR,
-				"Failed to create new buffer for frame background.");
+				"Failed to acquire a buffer for the frame background.");
 			return;
 		}
 
-		cairo_t *cairo = buffer.cairo;
+		cairo_t *cairo = buffer->cairo;
 		cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
 
 		cairo_save(cairo);
@@ -88,13 +85,27 @@ void render(struct swaylock_surface *surface) {
 			render_background_image(cairo, surface->image,
 				state->args.mode, buffer_width, buffer_height);
 		}
+		if (state->lua_renderer) {
+			cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+			surface->lua_draw_failed = !lua_renderer_draw(state->lua_renderer,
+				cairo, buffer_width, buffer_height, surface);
+			if (surface->lua_draw_failed) {
+				cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+				cairo_set_source_u32(cairo, state->args.colors.background);
+				cairo_paint(cairo);
+				if (surface->image &&
+						state->args.mode != BACKGROUND_MODE_SOLID_COLOR) {
+					cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+					render_background_image(cairo, surface->image,
+						state->args.mode, buffer_width, buffer_height);
+				}
+			}
+		}
 		cairo_restore(cairo);
 		cairo_identity_matrix(cairo);
 
-		wl_surface_attach(surface->surface, buffer.buffer, 0, 0);
+		wl_surface_attach(surface->surface, buffer->buffer, 0, 0);
 		wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
-		need_destroy = true;
-
 		surface->last_buffer_width = buffer_width;
 		surface->last_buffer_height = buffer_height;
 	}
@@ -107,10 +118,6 @@ void render(struct swaylock_surface *surface) {
 	surface->frame = wl_surface_frame(surface->surface);
 	wl_callback_add_listener(surface->frame, &surface_frame_listener, surface);
 	wl_surface_commit(surface->surface);
-
-	if (need_destroy) {
-		destroy_buffer(&buffer);
-	}
 }
 
 static void configure_font_drawing(cairo_t *cairo, struct swaylock_state *state,
@@ -141,7 +148,8 @@ static bool render_frame(struct swaylock_surface *surface) {
 	char *text = NULL;
 	const char *layout_text = NULL;
 
-	bool draw_indicator = state->args.show_indicator &&
+	bool draw_indicator = (!state->lua_renderer || surface->lua_draw_failed) &&
+		state->args.show_indicator &&
 		(state->auth_state != AUTH_STATE_IDLE ||
 			state->input_state != INPUT_STATE_IDLE ||
 			state->args.indicator_idle_visible);
