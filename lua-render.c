@@ -1,5 +1,8 @@
+#include <errno.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <cairo/cairo.h>
 #include <lua.h>
@@ -13,6 +16,7 @@
 #define CAIRO_CONTEXT_METATABLE "swaylock.cairo"
 #define LUA_HOOK_INSTRUCTION_INTERVAL 10000
 #define LUA_DRAW_TIMEOUT_NS 250000000L
+#define LUA_READ_FILE_LIMIT (1024 * 1024)
 
 struct lua_renderer {
 	lua_State *lua;
@@ -218,6 +222,85 @@ static void register_cairo_context(lua_State *lua) {
 	lua_pop(lua, 1);
 }
 
+static int lua_swaylock_read_file(lua_State *lua) {
+	const char *path = luaL_checkstring(lua, 1);
+	FILE *file = fopen(path, "rb");
+	if (!file) {
+		lua_pushnil(lua);
+		lua_pushfstring(lua, "%s: %s", path, strerror(errno));
+		return 2;
+	}
+
+	size_t capacity = 4096;
+	size_t length = 0;
+	char *contents = malloc(capacity);
+	if (!contents) {
+		fclose(file);
+		return luaL_error(lua, "failed to allocate file buffer");
+	}
+
+	while (length < LUA_READ_FILE_LIMIT) {
+		if (length == capacity) {
+			capacity *= 2;
+			if (capacity > LUA_READ_FILE_LIMIT) {
+				capacity = LUA_READ_FILE_LIMIT;
+			}
+			char *resized = realloc(contents, capacity);
+			if (!resized) {
+				free(contents);
+				fclose(file);
+				return luaL_error(lua, "failed to grow file buffer");
+			}
+			contents = resized;
+		}
+
+		size_t count = fread(contents + length, 1, capacity - length, file);
+		length += count;
+		if (count == 0) {
+			break;
+		}
+	}
+
+	if (ferror(file)) {
+		int error = errno;
+		free(contents);
+		fclose(file);
+		lua_pushnil(lua);
+		lua_pushfstring(lua, "%s: %s", path, strerror(error));
+		return 2;
+	}
+	if (length == LUA_READ_FILE_LIMIT) {
+		int next = fgetc(file);
+		if (ferror(file)) {
+			int error = errno;
+			free(contents);
+			fclose(file);
+			lua_pushnil(lua);
+			lua_pushfstring(lua, "%s: %s", path, strerror(error));
+			return 2;
+		}
+		if (next != EOF) {
+			free(contents);
+			fclose(file);
+			lua_pushnil(lua);
+			lua_pushfstring(lua, "%s: file exceeds 1 MiB", path);
+			return 2;
+		}
+	}
+
+	fclose(file);
+	lua_pushlstring(lua, contents, length);
+	free(contents);
+	return 1;
+}
+
+static void register_swaylock(lua_State *lua) {
+	lua_newtable(lua);
+	lua_pushcfunction(lua, lua_swaylock_read_file);
+	lua_setfield(lua, -2, "read_file");
+	lua_setglobal(lua, "swaylock");
+}
+
 static void remove_unsafe_globals(lua_State *lua) {
 	const char *globals[] = {
 		"debug", "dofile", "io", "jit", "load", "loadfile", "loadstring",
@@ -341,6 +424,7 @@ struct lua_renderer *lua_renderer_create(const char *path) {
 	luaJIT_setmode(renderer->lua, 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_OFF);
 	remove_unsafe_globals(renderer->lua);
 	register_cairo_context(renderer->lua);
+	register_swaylock(renderer->lua);
 
 	if (luaL_loadfile(renderer->lua, path) != 0 ||
 			lua_pcall(renderer->lua, 0, 1, 0) != 0) {
